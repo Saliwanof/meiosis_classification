@@ -29,7 +29,7 @@ class Encoder(nn.Module):
             # state size. (ndf*4) x 7 x 7
         )
         
-    def weights_init(self, init_func):
+    def weights_init(self, init_func=torch.nn.init.kaiming_normal):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 init_func(m)
@@ -65,7 +65,7 @@ class Decoder(nn.Module):
             # state size. (nc) x 224 x 224
         )
 
-    def weights_init(self, init_func):
+    def weights_init(self, init_func=torch.nn.init.kaiming_normal):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 init_func(m)

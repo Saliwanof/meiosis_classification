@@ -1,6 +1,60 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn import Linear, Conv2d, ReLU, Softmax, MaxPool2d, AvgPool2d, ConvTranspose2d, Upsample, Sigmoid
+from torch.nn import BatchNorm2d as Norm2d
+
+
+class Net(nn.Module):
+    def __init__(self, nclass, conv_ncs=[1]):
+        super(Net, self).__init__()
+        
+        conv_blocks = []
+        for nlayer in range(len(conv_ncs)):
+            if nlayer is 0:
+                conv_blocks.append(conv357_block(1, conv_ncs[nlayer]))
+            else:
+                conv_blocks.append(conv357_block(3*conv_ncs[nlayer-1], conv_ncs[nlayer]))
+        self.conv_blocks = conv_blocks
+        self.dense = Linear(int(3*conv_ncs[-1]*224./pow(2, len(conv_ncs))), nclass)
+        
+    def forward(self, x):
+        for conv_block in self.conv_blocks:
+            x = conv_block(x)
+            x = MaxPool(2)(x)
+        output = Softmax()(self.dense(x.view(-1)))
+        
+        return output
+
+class conv357_block(nn.Module):
+    def __init__(self, nc, nf, norm_flag=True):
+        super(conv357_block, self).__init__()
+        
+        self.conv3 = Conv2d(nc, nf, 3, 1, 1, bias=True)
+        self.conv5 = Conv2d(nc, nf, 5, 1, 2, bias=True)
+        self.conv7 = Conv2d(nc, nf, 7, 1, 3, bias=True)
+        
+        if norm_flag:
+            self.norm_flag = norm_flag
+            self.norm = Norm2d(3*nf)
+        
+        self.weights_init()
+        
+    def forward(self, x):
+        # x size BCHW
+        conv3 = ReLU(True)(self.conv3(x))
+        conv5 = ReLU(True)(self.conv5(x))
+        conv7 = ReLU(True)(self.conv7(x))
+        
+        cat = torch.cat((conv3, conv5, conv7), dim=1)
+        if self.norm_flag: cat = self.norm(cat)
+        
+        return cat
+
+    def weights_init(self, init_func=torch.nn.init.kaiming_uniform):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+                init_func(m.weight)
 
 
 class Encoder(nn.Module):
@@ -98,6 +152,7 @@ class VAE(nn.Module):
         z = self.reparameterize(mu, logvar)
         return self.decoder(z), mu, logvar
 
+''' VAE Loss Function
 
 def loss_function(recon_x, x, mu, logvar):
     reconstruction_function = nn.BCELoss(size_average=False)
@@ -107,7 +162,4 @@ def loss_function(recon_x, x, mu, logvar):
     KLD = torch.sum(KLD_element).mul_(-0.5)
     # KL divergence
     return BCE + KLD
-#
-
-initializer = torch.nn.init.kaiming_normal
-optimizer = torch.nn.optim.Adam
+'''

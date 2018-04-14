@@ -40,7 +40,9 @@ class Meiosis_Dataset(data.Dataset):
         img = Image.fromarray(img)
         
         preprocess = transforms.Compose([
-            transforms.RandomCrop(224),
+            transforms.RandomResizedCrop(224, (.9, 1.), (1., 1.)),
+            # transforms.RandomCrop(224),
+            # transforms.Resize(224),
             transforms.RandomHorizontalFlip(),
             transforms.RandomVerticalFlip(),
             transforms.ToTensor(),
@@ -50,7 +52,7 @@ class Meiosis_Dataset(data.Dataset):
         img = preprocess(img)
         if self.transform is not None:
             img = self.transform(img)
-        target = torch.FloatTensor(self.target)
+        target = torch.LongTensor([self.target])
         
         return img, target
 

@@ -1,60 +1,156 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn import Linear, Conv2d, ReLU, Softmax, MaxPool2d, AvgPool2d, ConvTranspose2d, Upsample, Sigmoid
+from torch.nn import Linear, Conv2d, Softmax, MaxPool2d, AvgPool2d, ConvTranspose2d, Upsample, Sigmoid
+from torch.nn import Dropout, Dropout2d, ReLU
 from torch.nn import BatchNorm2d as Norm2d
+from torch.nn import BatchNorm1d as Norm1d
 
 
 class Net(nn.Module):
-    def __init__(self, nclass, conv_ncs=[1]):
+    '''
+    receptfield of size 20px - 40px needed to detect an anomaly
+    '''
+    def __init__(self, nclass):
         super(Net, self).__init__()
         
-        conv_blocks = []
-        for nlayer in range(len(conv_ncs)):
-            if nlayer is 0:
-                conv_blocks.append(conv357_block(1, conv_ncs[nlayer]))
-            else:
-                conv_blocks.append(conv357_block(3*conv_ncs[nlayer-1], conv_ncs[nlayer]))
-        self.conv_blocks = conv_blocks
-        self.dense = Linear(int(3*conv_ncs[-1]*224./pow(2, len(conv_ncs))), nclass)
+        self.conv1a = conv_bn(1, 32, 3, 1, 2, 2, True)
+        self.conv1b = conv_bn(32, 32, 3, 1, 2, 2, True)
+        # pool
+        # (32, 112, 112)
+        self.conv2 = inception_v2(32, 64)
+        # pool
+        # (192, 56, 56)
+        self.conv3 = inception_v2(192, 64)
+        # pool
+        # (192, 28, 28)
+        self.conv4 = inception_v3(192, 64)
+        # pool
+        # (192, 14, 14)
+        self.conv5 = Conv2d(192, 16, 1, 1, 0, 1)
+        # (16, 14, 14)
+        # pool
+        # (16, 7, 7)
+        self.mlp1 = Linear(16*7*7, 64)
+        self.mlp2 = Linear(64, 64)
+        self.mlp3 = Linear(64, nclass)
+        
         
     def forward(self, x):
-        for conv_block in self.conv_blocks:
-            x = conv_block(x)
-            x = MaxPool(2)(x)
-        output = Softmax()(self.dense(x.view(-1)))
+        x = self.conv1a(x)
+        x = self.conv1b(x)
+        x = MaxPool2d(2)(x)
         
-        return output
+        x = self.conv2(x)
+        x = MaxPool2d(2)(x)
+        
+        x = self.conv3(x)
+        x = MaxPool2d(2)(x)
+        
+        x = self.conv4(x)
+        x = MaxPool2d(2)(x)
+        
+        x = self.conv5(x)
+        x = MaxPool2d(2)(x)
+        
+        x = x.view(-1, 16*7*7)
+        x = ReLU(True)(self.mlp1(x))
+        x = ReLU(True)(self.mlp2(x))
+        x = self.mlp3(x)
+        
+        return x
 
-class conv357_block(nn.Module):
+class inception_v2(nn.Module):
     def __init__(self, nc, nf, norm_flag=True):
-        super(conv357_block, self).__init__()
+        super(inception_v2, self).__init__()
         
-        self.conv3 = Conv2d(nc, nf, 3, 1, 1, bias=True)
-        self.conv5 = Conv2d(nc, nf, 5, 1, 2, bias=True)
-        self.conv7 = Conv2d(nc, nf, 7, 1, 3, bias=True)
+        self.conv3a = Conv2d(nc, nf, 1, 1, 0)
+        self.conv3b = Conv2d(nf, nf, 3, 1, 1)
+        self.conv5a = Conv2d(nc, nf, 1, 1, 0)
+        self.conv5b = Conv2d(nf, nf, 3, 1, 1)
+        self.conv5c = Conv2d(nf, nf, 3, 1, 1)
+        self.conv7a = Conv2d(nc, nf, 1, 1, 0)
+        self.conv7b = Conv2d(nf, nf, 3, 1, 1)
+        self.conv7c = Conv2d(nf, nf, 3, 1, 1)
+        self.conv7d = Conv2d(nf, nf, 3, 1, 1)
         
         if norm_flag:
             self.norm_flag = norm_flag
             self.norm = Norm2d(3*nf)
         
-        self.weights_init()
-        
     def forward(self, x):
         # x size BCHW
-        conv3 = ReLU(True)(self.conv3(x))
-        conv5 = ReLU(True)(self.conv5(x))
-        conv7 = ReLU(True)(self.conv7(x))
+        conv3 = ReLU(True)(self.conv3a(x))
+        conv3 = ReLU(True)(self.conv3b(conv3))
+        conv5 = ReLU(True)(self.conv5a(x))
+        conv5 = ReLU(True)(self.conv5b(conv5))
+        conv5 = ReLU(True)(self.conv5c(conv5))
+        conv7 = ReLU(True)(self.conv7a(x))
+        conv7 = ReLU(True)(self.conv7b(conv7))
+        conv7 = ReLU(True)(self.conv7c(conv7))
+        conv7 = ReLU(True)(self.conv7d(conv7))
         
         cat = torch.cat((conv3, conv5, conv7), dim=1)
         if self.norm_flag: cat = self.norm(cat)
         
         return cat
 
-    def weights_init(self, init_func=torch.nn.init.kaiming_uniform):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-                init_func(m.weight)
+
+class inception_v3(nn.Module):
+    def __init__(self, nc, nf, norm_flag=True):
+        super(inception_v3, self).__init__()
+        
+        self.conv3a = Conv2d(nc, nf, 1, 1, 0)
+        self.conv3b = factorize_conv(nf, nf, 3)
+        self.conv5a = Conv2d(nc, nf, 1, 1, 0)
+        self.conv5b = factorize_conv(nf, nf, 5)
+        self.conv7a = Conv2d(nc, nf, 1, 1, 0)
+        self.conv7b = factorize_conv(nf, nf, 7)
+        
+        if norm_flag:
+            self.norm_flag = norm_flag
+            self.norm = Norm2d(3*nf)
+        
+    def forward(self, x):
+        # x size BCHW
+        conv3 = ReLU(True)(self.conv3a(x))
+        conv3 = ReLU(True)(self.conv3b(conv3))
+        conv5 = ReLU(True)(self.conv5a(x))
+        conv5 = ReLU(True)(self.conv5b(conv5))
+        conv7 = ReLU(True)(self.conv7a(x))
+        conv7 = ReLU(True)(self.conv7b(conv7))
+        
+        cat = torch.cat((conv3, conv5, conv7), dim=1)
+        if self.norm_flag: cat = self.norm(cat)
+        
+        return cat
+
+class factorize_conv(nn.Module):
+    def __init__(self, nc, nf, ksize):
+        super(factorize_conv, self).__init__()
+        
+        padding = ksize // 2
+        self.conv_1xn = Conv2d(nc, nf, (ksize, 1), 1, (padding, 0))
+        self.conv_nx1 = Conv2d(nf, nf, (1, ksize), 1, (0, padding))
+        
+    def forward(self, x):
+        x = self.conv_1xn(x)
+        x = self.conv_nx1(x)
+        
+        return x
+    
+class conv_bn(nn.Module):
+    def __init__(self, nc, nf, filter_size=3, stride=1, padding=1, dilation=1, bias_flag=True):
+        super(conv_bn, self).__init__()
+        
+        self.conv = Conv2d(nc, nf, filter_size, stride, padding, dilation, bias=bias_flag)
+        self.bn = Norm2d(nf)
+        
+    def forward(self, x):
+        x = ReLU(True)(self.conv(x))
+        x = self.bn(x)
+        
+        return x
 
 
 class Encoder(nn.Module):

@@ -2,17 +2,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Linear, Conv2d, Softmax, MaxPool2d, AvgPool2d, ConvTranspose2d, Upsample, Sigmoid
-from torch.nn import Dropout, Dropout2d, ReLU
+from torch.nn import Dropout, Dropout2d, ReLU, Softplus, LeakyReLU
 from torch.nn import BatchNorm2d as Norm2d
 from torch.nn import BatchNorm1d as Norm1d
 
+# activation_func = ReLU(True)
+activation_func = LeakyReLU(0.1, True)
+# activation_func = Softplus()
 
-class Net(nn.Module):
+class Net_Feature_Extraction(nn.Module):
     '''
     receptfield of size 20px - 40px needed to detect an anomaly
     '''
-    def __init__(self, nclass):
-        super(Net, self).__init__()
+    def __init__(self):
+        super(Net_Feature_Extraction, self).__init__()
         
         self.conv1a = conv_bn(1, 32, 3, 1, 2, 2, True)
         self.conv1b = conv_bn(32, 32, 3, 1, 2, 2, True)
@@ -24,7 +27,60 @@ class Net(nn.Module):
         self.conv3 = inception_v2(192, 64)
         # pool
         # (192, 28, 28)
-        self.conv4 = inception_v3(192, 64)
+        self.conv4 = inception_v2(192, 64)
+        # pool
+        # (192, 14, 14)
+        self.conv5 = Conv2d(192, 16, 1, 1, 0, 1)
+        # (16, 14, 14)
+        # pool
+        # (16, 7, 7)
+        
+        
+    def forward(self, x):
+        x = self.conv1a(x)
+        x = Dropout2d(.2, True)(x)
+        x = self.conv1b(x)
+        x = Dropout2d(.2, True)(x)
+        x = MaxPool2d(2)(x)
+        
+        x = self.conv2(x)
+        x = Dropout2d(.4, True)(x)
+        x = MaxPool2d(2)(x)
+        
+        x = self.conv3(x)
+        x = Dropout2d(.4, True)(x)
+        x = MaxPool2d(2)(x)
+        
+        x = self.conv4(x)
+        x = Dropout2d(.4, True)(x)
+        x = MaxPool2d(2)(x)
+        
+        x = self.conv5(x)
+        x = Dropout2d(.4, True)(x)
+        x = MaxPool2d(2)(x)
+        
+        feature = x.view(-1, 16*7*7)
+        
+        return feature
+
+class Net_Period_Classification(nn.Module):
+    '''
+    receptfield of size 20px - 40px needed to detect an anomaly
+    '''
+    def __init__(self, nclass):
+        super(Net_Period_Classification, self).__init__()
+        
+        self.conv1a = conv_bn(1, 32, 3, 1, 2, 2, True)
+        self.conv1b = conv_bn(32, 32, 3, 1, 2, 2, True)
+        # pool
+        # (32, 112, 112)
+        self.conv2 = inception_v2(32, 64)
+        # pool
+        # (192, 56, 56)
+        self.conv3 = inception_v2(192, 64)
+        # pool
+        # (192, 28, 28)
+        self.conv4 = inception_v2(192, 64)
         # pool
         # (192, 14, 14)
         self.conv5 = Conv2d(192, 16, 1, 1, 0, 1)
@@ -38,27 +94,36 @@ class Net(nn.Module):
         
     def forward(self, x):
         x = self.conv1a(x)
+        x = Dropout2d(.2, True)(x)
         x = self.conv1b(x)
+        x = Dropout2d(.2, True)(x)
         x = MaxPool2d(2)(x)
         
         x = self.conv2(x)
+        x = Dropout2d(.4, True)(x)
         x = MaxPool2d(2)(x)
         
         x = self.conv3(x)
+        x = Dropout2d(.4, True)(x)
         x = MaxPool2d(2)(x)
         
         x = self.conv4(x)
+        x = Dropout2d(.4, True)(x)
         x = MaxPool2d(2)(x)
         
         x = self.conv5(x)
+        x = Dropout2d(.4, True)(x)
         x = MaxPool2d(2)(x)
         
         x = x.view(-1, 16*7*7)
-        x = ReLU(True)(self.mlp1(x))
-        x = ReLU(True)(self.mlp2(x))
-        x = self.mlp3(x)
+        feature = x
         
-        return x
+        x = activation_func(self.mlp1(x))
+        x = activation_func(self.mlp2(x))
+        x = self.mlp3(x)
+        target = x
+        
+        return target, feature
 
 class inception_v2(nn.Module):
     def __init__(self, nc, nf, norm_flag=True):
@@ -80,15 +145,15 @@ class inception_v2(nn.Module):
         
     def forward(self, x):
         # x size BCHW
-        conv3 = ReLU(True)(self.conv3a(x))
-        conv3 = ReLU(True)(self.conv3b(conv3))
-        conv5 = ReLU(True)(self.conv5a(x))
-        conv5 = ReLU(True)(self.conv5b(conv5))
-        conv5 = ReLU(True)(self.conv5c(conv5))
-        conv7 = ReLU(True)(self.conv7a(x))
-        conv7 = ReLU(True)(self.conv7b(conv7))
-        conv7 = ReLU(True)(self.conv7c(conv7))
-        conv7 = ReLU(True)(self.conv7d(conv7))
+        conv3 = activation_func(self.conv3a(x))
+        conv3 = activation_func(self.conv3b(conv3))
+        conv5 = activation_func(self.conv5a(x))
+        conv5 = activation_func(self.conv5b(conv5))
+        conv5 = activation_func(self.conv5c(conv5))
+        conv7 = activation_func(self.conv7a(x))
+        conv7 = activation_func(self.conv7b(conv7))
+        conv7 = activation_func(self.conv7c(conv7))
+        conv7 = activation_func(self.conv7d(conv7))
         
         cat = torch.cat((conv3, conv5, conv7), dim=1)
         if self.norm_flag: cat = self.norm(cat)
@@ -113,12 +178,12 @@ class inception_v3(nn.Module):
         
     def forward(self, x):
         # x size BCHW
-        conv3 = ReLU(True)(self.conv3a(x))
-        conv3 = ReLU(True)(self.conv3b(conv3))
-        conv5 = ReLU(True)(self.conv5a(x))
-        conv5 = ReLU(True)(self.conv5b(conv5))
-        conv7 = ReLU(True)(self.conv7a(x))
-        conv7 = ReLU(True)(self.conv7b(conv7))
+        conv3 = activation_func(self.conv3a(x))
+        conv3 = activation_func(self.conv3b(conv3))
+        conv5 = activation_func(self.conv5a(x))
+        conv5 = activation_func(self.conv5b(conv5))
+        conv7 = activation_func(self.conv7a(x))
+        conv7 = activation_func(self.conv7b(conv7))
         
         cat = torch.cat((conv3, conv5, conv7), dim=1)
         if self.norm_flag: cat = self.norm(cat)
@@ -147,7 +212,7 @@ class conv_bn(nn.Module):
         self.bn = Norm2d(nf)
         
     def forward(self, x):
-        x = ReLU(True)(self.conv(x))
+        x = activation_func(self.conv(x))
         x = self.bn(x)
         
         return x
@@ -196,19 +261,19 @@ class Decoder(nn.Module):
             # input is (ndf*4) x 7 x 7, going into a convolution
             nn.ConvTranspose2d(ngf * 4, ngf * 2, 4, 1, 0, bias=False),
             # nn.BatchNorm2d(ngf * 2),
-            nn.ReLU(True),
+            nn.activation_func,
             # state size. (ngf*2) x 14 x 14
             nn.ConvTranspose2d(ngf * 2, ngf * 2, 4, 2, 1, bias=False),
             # nn.BatchNorm2d(ngf * 2),
-            nn.ReLU(True),
+            nn.activation_func,
             # state size. (ngf*2) x 28 x 28
             nn.ConvTranspose2d(ngf * 2, ngf, 4, 2, 1, bias=False),
             # nn.BatchNorm2d(ngf),
-            nn.ReLU(True),
+            nn.activation_func,
             # state size. (ngf) x 56 x 56
             nn.ConvTranspose2d(ngf, ngf, 4, 2, 1, bias=False),
             # nn.BatchNorm2d(ngf),
-            nn.ReLU(True),
+            nn.activation_func,
             # state size. (ngf) x 112 x 112
             nn.ConvTranspose2d(ngf, nc, 4, 2, 1, bias=False),
             nn.Sigmoid()
